@@ -15,6 +15,7 @@ class TextToSpeech:
 
     def __init__(self, character_folder):
         self.character_folder = character_folder
+        # g2p without nltk tokenizer (we’ll tokenize manually with regex)
         self.g2p = G2p()
         self.word_pause = 0.01
         self.comma_pause = 0.25
@@ -28,10 +29,11 @@ class TextToSpeech:
         return silence_sample * num_samples * channels
 
     def _get_phonemes(self, word):
-        phonemes = self.g2p(word)
+        phonemes = self.g2p(word)  # g2p returns list
         return [re.sub(r'\d+', '', p) for p in phonemes if re.match(r'[A-Z]+[0-9]*', p)]
 
     def get_pronunciation(self, str_input):
+        # Manual regex tokenizer instead of nltk
         tokens = re.findall(r"[\w']+|[.,!?;]", str_input)
         playback_list = []
 
@@ -63,7 +65,6 @@ class TextToSpeech:
 
     def _play_sequence(self, playback_list):
         p = pyaudio.PyAudio()
-        stream = None
         target_channels = 1        # Force mono
         target_rate = 44100        # Force 44.1kHz
         target_width = 2           # 16-bit
@@ -76,7 +77,6 @@ class TextToSpeech:
         for item_type, value in playback_list:
             if item_type == "silence":
                 time.sleep(value)
-
             elif item_type == "file":
                 try:
                     with wave.open(value, 'rb') as wf:
@@ -105,38 +105,6 @@ class TextToSpeech:
         stream.stop_stream()
         stream.close()
         p.terminate()
-
-
-    def _read_wav(self, filepath):
-        with wave.open(filepath, 'rb') as wf:
-            return wf.readframes(wf.getnframes())
-
-    def _get_wav_duration(self, filepath):
-        try:
-            with wave.open(filepath, 'rb') as wf:
-                frames, rate = wf.getnframes(), wf.getframerate()
-                return frames / float(rate)
-        except:
-            return 0.25
-
-    def _play_audio(self, filepath, delay):
-        try:
-            time.sleep(delay)
-            wf = wave.open(filepath, 'rb')
-            p = pyaudio.PyAudio()
-            stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
-                            channels=wf.getnchannels(),
-                            rate=wf.getframerate(),
-                            output=True)
-            data = wf.readframes(self.CHUNK)
-            while data:
-                stream.write(data)
-                data = wf.readframes(self.CHUNK)
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
-        except Exception as e:
-            print(e)
 
     def render_to_file(self, str_input, output_path):
         tokens = re.findall(r"[\w']+|[.,!?;]", str_input)
@@ -202,6 +170,7 @@ class TextToSpeech:
                 data, _ = audioop.ratecv(data, target_width, target_channels, rate, target_rate, None)
 
             return data
+
 
 class TTSGui(QtWidgets.QWidget):
     def __init__(self):
@@ -277,6 +246,7 @@ class TTSGui(QtWidgets.QWidget):
         char_folder = self.categories[category][char_name]
         tts = TextToSpeech(char_folder)
         threading.Thread(target=tts.get_pronunciation, args=(text,)).start()
+
     def render(self):
         selected_items = self.character_selector.selectedItems()
         if not selected_items:
