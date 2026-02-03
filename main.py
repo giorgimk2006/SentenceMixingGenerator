@@ -8,6 +8,7 @@ from PyQt5 import QtWidgets, QtGui, QtCore
 import pyaudio
 from g2p_en import G2p
 import audioop  # built-in, used for converting channels
+import random
 
 
 class TextToSpeech:
@@ -15,31 +16,74 @@ class TextToSpeech:
 
     def __init__(self, character_folder):
         self.character_folder = character_folder
-        # g2p without nltk tokenizer (we’ll tokenize manually with regex)
-        self.g2p = G2p()
+        self.g2p = G2p()  # g2p without nltk tokenizer
         self.word_pause = 0.01
         self.comma_pause = 0.25
         self.period_pause = 0.3
 
-    def _generate_silence(self, duration_sec, frame_rate, sample_width, channels):
-        if not frame_rate or not sample_width or not channels:
-            frame_rate, sample_width, channels = 44100, 2, 1
+    # ------------------ Random WAV Picker ------------------
+    def _pick_random_variant(self, base_path):
+        """
+        Picks a random wav:
+        base.wav OR base_<any number>.wav
+        Example: AH.wav, AH_2000.wav, AH_57.wav
+        """
+        directory = os.path.dirname(base_path)
+        base_name = os.path.splitext(os.path.basename(base_path))[0]
+
+        if not os.path.isdir(directory):
+            return None
+
+        pattern = re.compile(rf"^{re.escape(base_name)}(_\d+)?\.wav$", re.IGNORECASE)
+
+        candidates = [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if pattern.match(f)
+        ]
+
+        if not candidates:
+            return None
+
+        return random.choice(candidates)
+
+    # ------------------ Get WAVs ------------------
+    def _get_word_wav(self, word):
+        word = word.upper()
+        base = os.path.join(self.character_folder, "words", f"{word}.wav")
+        return self._pick_random_variant(base)
+
+    def _get_phoneme_wav(self, phoneme):
+        base = os.path.join(self.character_folder, f"{phoneme}.wav")
+        return self._pick_random_variant(base)
+
+    # ------------------ Phoneme Extraction ------------------
+    def _get_phonemes(self, word):
+        raw_phonemes = self.g2p(word)
+        cleaned = []
+
+        for p in raw_phonemes:
+            if not re.match(r'[A-Z]+[0-9]*', p):
+                continue
+            # Strip stress digits AFTER replacement
+            p = re.sub(r'\d+', '', p)
+            cleaned.append(p)
+
+        return cleaned
+
+
+    # ------------------ Silence Generator ------------------
+    def _generate_silence(self, duration_sec, frame_rate=44100, sample_width=2, channels=1):
         num_samples = int(frame_rate * duration_sec)
         silence_sample = b'\x00' * sample_width
         return silence_sample * num_samples * channels
 
-    def _get_phonemes(self, word):
-        phonemes = self.g2p(word)  # g2p returns list
-        return [re.sub(r'\d+', '', p) for p in phonemes if re.match(r'[A-Z]+[0-9]*', p)]
-
+    # ------------------ Playback ------------------
     def get_pronunciation(self, str_input):
-        # Manual regex tokenizer instead of nltk
         tokens = re.findall(r"[\w']+|[.,!?;]", str_input)
         playback_list = []
 
         for token in tokens:
-            token_upper = token.upper()
-
             if token in [".", "!", "?"]:
                 playback_list.append(("silence", self.period_pause))
                 continue
@@ -47,27 +91,28 @@ class TextToSpeech:
                 playback_list.append(("silence", self.comma_pause))
                 continue
 
-            word_wav = os.path.join(self.character_folder, 'words', f'{token_upper}.wav')
-            if os.path.isfile(word_wav):
+            # Word-first playback
+            word_wav = self._get_word_wav(token)
+            if word_wav:
                 playback_list.append(("file", word_wav))
             else:
                 phonemes = self._get_phonemes(token)
                 for phoneme in phonemes:
-                    phoneme_wav = os.path.join(self.character_folder, f'{phoneme}.wav')
-                    if os.path.isfile(phoneme_wav):
+                    phoneme_wav = self._get_phoneme_wav(phoneme)
+                    if phoneme_wav:
                         playback_list.append(("file", phoneme_wav))
                     else:
                         print(f"Missing phoneme WAV: {phoneme}")
+
             playback_list.append(("silence", self.word_pause))
 
-        # Play everything in one background thread
         threading.Thread(target=self._play_sequence, args=(playback_list,)).start()
 
     def _play_sequence(self, playback_list):
         p = pyaudio.PyAudio()
-        target_channels = 1        # Force mono
-        target_rate = 44100        # Force 44.1kHz
-        target_width = 2           # 16-bit
+        target_channels = 1
+        target_rate = 44100
+        target_width = 2
 
         stream = p.open(format=p.get_format_from_width(target_width),
                         channels=target_channels,
@@ -85,15 +130,10 @@ class TextToSpeech:
                         rate = wf.getframerate()
                         data = wf.readframes(wf.getnframes())
 
-                        # Convert to mono if needed
                         if channels > 1:
                             data = audioop.tomono(data, width, 0.5, 0.5)
-
-                        # Convert sample width to 16-bit if needed
                         if width != target_width:
                             data = audioop.lin2lin(data, width, target_width)
-
-                        # Resample to 44100 if needed
                         if rate != target_rate:
                             data, _ = audioop.ratecv(data, target_width, 1, rate, target_rate, None)
 
@@ -106,17 +146,16 @@ class TextToSpeech:
         stream.close()
         p.terminate()
 
+    # ------------------ Render to WAV File ------------------
     def render_to_file(self, str_input, output_path):
         tokens = re.findall(r"[\w']+|[.,!?;]", str_input)
         audio_segments = []
 
         target_channels = 1
-        target_width = 2       # 16-bit
+        target_width = 2
         target_rate = 44100
 
         for token in tokens:
-            token_upper = token.upper()
-
             if token in [".", "!", "?"]:
                 audio_segments.append(self._generate_silence(0.5, target_rate, target_width, target_channels))
                 continue
@@ -124,20 +163,19 @@ class TextToSpeech:
                 audio_segments.append(self._generate_silence(0.25, target_rate, target_width, target_channels))
                 continue
 
-            word_wav = os.path.join(self.character_folder, 'words', f'{token_upper}.wav')
-            if os.path.isfile(word_wav):
+            word_wav = self._get_word_wav(token)
+            if word_wav:
                 audio_segments.append(self._normalize_wav(word_wav, target_channels, target_width, target_rate))
             else:
                 phonemes = self._get_phonemes(token)
                 for phoneme in phonemes:
-                    phoneme_wav = os.path.join(self.character_folder, f'{phoneme}.wav')
-                    if os.path.isfile(phoneme_wav):
+                    phoneme_wav = self._get_phoneme_wav(phoneme)
+                    if phoneme_wav:
                         audio_segments.append(self._normalize_wav(phoneme_wav, target_channels, target_width, target_rate))
                     else:
                         print(f"Missing phoneme WAV: {phoneme}")
 
-            # word pause
-            audio_segments.append(self._generate_silence(0.01, target_rate, target_width, target_channels))
+            audio_segments.append(self._generate_silence(self.word_pause, target_rate, target_width, target_channels))
 
         if not audio_segments:
             print("Nothing to render.")
@@ -150,28 +188,23 @@ class TextToSpeech:
             wf.writeframes(b''.join(audio_segments))
 
     def _normalize_wav(self, filepath, target_channels, target_width, target_rate):
-        """Read a wav file and normalize it to target format"""
         with wave.open(filepath, 'rb') as wf:
             channels = wf.getnchannels()
             width = wf.getsampwidth()
             rate = wf.getframerate()
             data = wf.readframes(wf.getnframes())
 
-            # Convert to mono if needed
             if channels > 1 and target_channels == 1:
                 data = audioop.tomono(data, width, 0.5, 0.5)
-
-            # Convert sample width
             if width != target_width:
                 data = audioop.lin2lin(data, width, target_width)
-
-            # Resample to target_rate
             if rate != target_rate:
                 data, _ = audioop.ratecv(data, target_width, target_channels, rate, target_rate, None)
 
             return data
 
 
+# ------------------ GUI ------------------
 class TTSGui(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -191,22 +224,26 @@ class TTSGui(QtWidgets.QWidget):
         self.play_button = QtWidgets.QPushButton("Speak")
         self.play_button.clicked.connect(self.speak)
 
+        self.render_button = QtWidgets.QPushButton("Render to WAV")
+        self.render_button.clicked.connect(self.render)
+
         self.layout.addWidget(QtWidgets.QLabel("Select Category:"))
         self.layout.addWidget(self.category_selector)
         self.layout.addWidget(QtWidgets.QLabel("Select Character:"))
         self.layout.addWidget(self.character_selector)
         self.layout.addWidget(self.text_input)
         self.layout.addWidget(self.play_button)
-        self.render_button = QtWidgets.QPushButton("Render to WAV")
-        self.render_button.clicked.connect(self.render)
         self.layout.addWidget(self.render_button)
-
         self.setLayout(self.layout)
+
         self.load_categories()
 
     def load_categories(self):
         self.categories = {}
         base_path = 'assets/characters'
+        if not os.path.isdir(base_path):
+            return
+
         for category in os.listdir(base_path):
             category_path = os.path.join(base_path, category)
             if os.path.isdir(category_path):
@@ -218,8 +255,7 @@ class TTSGui(QtWidgets.QWidget):
 
         self.category_selector.addItems(self.categories.keys())
         if self.categories:
-            first_category = next(iter(self.categories))
-            self.update_character_list(first_category)
+            self.update_character_list(next(iter(self.categories)))
 
     def update_character_list(self, selected_category):
         self.character_selector.clear()
@@ -237,9 +273,8 @@ class TTSGui(QtWidgets.QWidget):
 
         char_name = selected_items[0].text()
         category = self.category_selector.currentText()
-        text = self.text_input.text()
-
-        if not text.strip():
+        text = self.text_input.text().strip()
+        if not text:
             QtWidgets.QMessageBox.warning(self, "Error", "Please enter some text.")
             return
 
@@ -255,16 +290,14 @@ class TTSGui(QtWidgets.QWidget):
 
         char_name = selected_items[0].text()
         category = self.category_selector.currentText()
-        text = self.text_input.text()
-
-        if not text.strip():
+        text = self.text_input.text().strip()
+        if not text:
             QtWidgets.QMessageBox.warning(self, "Error", "Please enter some text.")
             return
 
         char_folder = self.categories[category][char_name]
         tts = TextToSpeech(char_folder)
 
-        # Ask where to save file
         save_path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Rendered Audio", "", "WAV Files (*.wav)")
         if not save_path:
             return
