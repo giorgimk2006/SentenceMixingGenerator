@@ -1,6 +1,6 @@
 # Sentence Mixing Generator
 
-Have you wanted generate the sentence mixing voice line? well, There's the sentence mixing generator. But with G2P_en phonemes without numbers.
+Have you wanted generate the sentence mixing voice line? well, There's the sentence mixing generator. But with G2P_en phonemes with words and phonemes.
 
 You can generate the sentence mixing voice lines by typing the sentence you want, it has no effort to generate this sentence mixing voiceline.
 
@@ -25,3 +25,4 @@ If you've got Python on your computer, go ahead and install the packages listed 
 ## Running
 
 Just run `run.bat` to start the GUI.
+
