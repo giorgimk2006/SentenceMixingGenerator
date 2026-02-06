@@ -14,8 +14,7 @@ You don't need Python if you're only running the bat file.
 If you’re not using Windows and prefer not to install Python, you can grab this portable version instead.
 
 Link:
-[https://www.mediafire.com/file/yekjoyi8haz14xk/SentenceMixingGenerator.zip/file](https://www.mediafire.com/file/iqpcb9cgs4xo4z9/SentenceMixingGenerator.rar/file)
-https://www.youtube.com/watch?v=nb-IGNXK5dI
+https://www.mediafire.com/file/r4bs2ty6lgl2qo9/SentenceMixingGenerator.rar/file
 
 Simply downlaod the 7z or ZIP archive and extract it.
 
@@ -25,4 +24,5 @@ If you've got Python on your computer, go ahead and install the packages listed 
 ## Running
 
 Just run `run.bat` to start the GUI.
+
 
